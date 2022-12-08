@@ -4,10 +4,10 @@
  * The pedal is connected to the pedal through the cable that is
  * normally connected to CON5 on the organ's processor board.
  *
- *   PB0   1   2  PD0
- *   PB1   3   4  PD1
- *   PB2   5   6  PD2
- *   PB3   7   8  PD3
+ *   PB0   1   2  PD3
+ *   PB1   3   4  PD2
+ *   PB2   5   6  PD1
+ *   PB3   7   8  PD0
  *   PB4   9  10
  *   PB5  11  12
  *   PB6  13  14
