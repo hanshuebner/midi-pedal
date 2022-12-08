@@ -17,6 +17,7 @@
 
 #include "MIDI.h"
 
+
 USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface = {
   .Config = {
     .StreamingInterfaceNumber = INTERFACE_ID_AudioStream,
@@ -36,9 +37,12 @@ USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface = {
 #define DEBOUNCE_TIME 10 // Number of 2ms cycles to debounce inputs
 #define NPEDALS   32     // Number of pedals
 #define BASE_NOTE 24     // C1, see https://www.inspiredacoustics.com/en/MIDI_note_numbers_and_center_frequencies
-
 static uint8_t pedal_locks[NPEDALS];
 static uint32_t last_pedal_state;
+
+#define SYS_LED_MASK 0x40
+static uint8_t sys_led_cycle = 0;
+static uint8_t sys_led_state = 0;
 
 ISR (TIMER0_OVF_vect)
 {
@@ -47,29 +51,39 @@ ISR (TIMER0_OVF_vect)
       pedal_locks[i]--;
     }
   }
+  sys_led_state = (sys_led_cycle++ & 0x80) ? SYS_LED_MASK : 0;
 }
 
-uint32_t get_locked(void)
+uint32_t
+get_locked(void)
 {
   uint32_t locked = 0;
+  GlobalInterruptDisable();
   for (uint8_t i = 0; i < NPEDALS; i++) {
     locked >>= 1;
     if (pedal_locks[i]) {
       locked |= 0x80000000;
     }
   }
+  GlobalInterruptEnable();
   return locked;
 }
 
-uint32_t read_pedal(void)
+uint32_t
+read_pedal(void)
 {
   uint32_t state = 0;
+  GlobalInterruptDisable();
   for (uint8_t block = 0x08; block; block >>= 1) {
-    PORTD = block;
+    PORTD = (block ^ 0x0F) | sys_led_state;
     state <<= 8;
     state |= PINB;
   }
-  return state;
+  GlobalInterruptEnable();
+  if (~state) {
+    PORTD |= SYS_LED_MASK;
+  }
+  return ~state;
 }
 
 void
@@ -85,7 +99,7 @@ check_pedal(void)
         pedal_locks[i] = DEBOUNCE_TIME;
       }
 
-      uint8_t command = work_state & 1 ? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF;
+      uint8_t command = (work_state & 1) ? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF;
       MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t) {
         .Event       = MIDI_EVENT(0, command),
         .Data1       = command | MIDI_CHANNEL(1),
@@ -108,7 +122,6 @@ main(void)
 {
   SetupHardware();
 
-  LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
   GlobalInterruptEnable();
 
   for (;;) {
@@ -116,10 +129,12 @@ main(void)
     check_pedal();
 
     while (MIDI_Device_ReceiveEventPacket(&Keyboard_MIDI_Interface, &ReceivedMIDIEvent)) {
+#if 0
       if ((ReceivedMIDIEvent.Event == MIDI_EVENT(0, MIDI_COMMAND_NOTE_ON)) && (ReceivedMIDIEvent.Data3 > 0))
         LEDs_SetAllLEDs(ReceivedMIDIEvent.Data2 > 64 ? LEDS_LED1 : LEDS_LED2);
       else
         LEDs_SetAllLEDs(LEDS_NO_LEDS);
+#endif
     }
 
     MIDI_Device_USBTask(&Keyboard_MIDI_Interface);
@@ -138,26 +153,26 @@ void SetupHardware(void)
   clock_prescale_set(clock_div_1);
 
   /* Hardware Initialization */
-  LEDs_Init();
   USB_Init();
 
+  // Ports initialisieren
+  DDRB = 0;
+  PORTB = 0xFF; // pull-ups aktivieren
+  
+  DDRD = 0x4F;
+  PORTD |= 0x0F;
+
+  TCCR0A=0x00;                  // Normal Counter mode
+  TCCR0B|=(1<<CS01)|(1<<CS00);  // prescaler 64
+  TCNT0=6;                     // Vorladen mit 6, damit timer 250 Tyktzyklen zaehlt
+  TIMSK0=0x01;                 // Overflow Interrupt enablen
+#if 0
   // Timer 0 konfigurieren
   TCCR0A = (1<<CS01); // Prescaler 8
 
   // Overflow Interrupt erlauben
   TIMSK0 |= (1<<TOIE0);
-}
-
-/** Event handler for the library USB Connection event. */
-void EVENT_USB_Device_Connect(void)
-{
-  LEDs_SetAllLEDs(LEDMASK_USB_ENUMERATING);
-}
-
-/** Event handler for the library USB Disconnection event. */
-void EVENT_USB_Device_Disconnect(void)
-{
-  LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
+#endif
 }
 
 /** Event handler for the library USB Configuration Changed event. */
@@ -166,8 +181,6 @@ void EVENT_USB_Device_ConfigurationChanged(void)
   bool ConfigSuccess = true;
 
   ConfigSuccess &= MIDI_Device_ConfigureEndpoints(&Keyboard_MIDI_Interface);
-
-  LEDs_SetAllLEDs(ConfigSuccess ? LEDMASK_USB_READY : LEDMASK_USB_ERROR);
 }
 
 /** Event handler for the library USB Control Request reception event. */
