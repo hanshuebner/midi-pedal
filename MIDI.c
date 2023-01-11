@@ -73,16 +73,18 @@ uint32_t
 read_pedal(void)
 {
   uint32_t state = 0;
-  GlobalInterruptDisable();
+  // GlobalInterruptDisable();
   for (uint8_t block = 0x80; block; block >>= 1) {
     PORTB = ~block;
-    Delay_MS(1);
+    _delay_us(100);
     state <<= 4;
     state |= (PIND & 0x0f);
   }
-  GlobalInterruptEnable();
+  // GlobalInterruptEnable();
   return ~state;
 }
+
+uint8_t midi_channel = 1;
 
 void
 send_midi_note(uint8_t note, uint8_t on)
@@ -90,7 +92,7 @@ send_midi_note(uint8_t note, uint8_t on)
   uint8_t command = on ? MIDI_COMMAND_NOTE_ON : MIDI_COMMAND_NOTE_OFF;
   MIDI_EventPacket_t MIDIEvent = (MIDI_EventPacket_t) {
     .Event       = MIDI_EVENT(0, command),
-    .Data1       = command | MIDI_CHANNEL(1),
+    .Data1       = command | MIDI_CHANNEL(midi_channel),
     .Data2       = note,
     .Data3       = MIDI_STANDARD_VELOCITY,
   };
@@ -99,23 +101,23 @@ send_midi_note(uint8_t note, uint8_t on)
   MIDI_Device_Flush(&Keyboard_MIDI_Interface);
 }
 
+uint8_t scancode_to_keynum[32];
+
 void
 check_pedal(void)
 {
   uint32_t pedal_state = read_pedal() | get_locked();
   uint32_t changed_state = pedal_state ^ last_pedal_state;
   uint32_t work_state = pedal_state;
-  uint8_t note = BASE_NOTE;
-  for (uint8_t i = 0; i < NPEDALS; i++) {
+  for (uint8_t scancode = 0; scancode < NPEDALS; scancode++) {
     if (changed_state & 1) {
       if (work_state & 1) {
-        pedal_locks[i] = DEBOUNCE_TIME;
+        pedal_locks[scancode] = DEBOUNCE_TIME;
       }
-      send_midi_note(note, work_state & 1);
+      send_midi_note(BASE_NOTE + scancode_to_keynum[scancode], work_state & 1);
     }
     changed_state >>= 1;
     work_state >>= 1;
-    note++;
   }
   last_pedal_state = pedal_state;
 }
@@ -129,12 +131,75 @@ flush_midi_receive_events(void)
     }
 }
 
+void
+init_midi_channel(void)
+{
+  uint8_t new_midi_channel = midi_channel = eeprom_read_byte((uint8_t*) 0);
+  uint32_t pedal_state = read_pedal();
+  if (pedal_state) {
+    for (uint8_t scancode = 0; scancode < NPEDALS; scancode++, pedal_state >>= 1) {
+      if (pedal_state & 1 && scancode_to_keynum[scancode] != 255) {
+        new_midi_channel = scancode_to_keynum[scancode];
+      }
+    }
+  }
+  if (new_midi_channel < 1 || new_midi_channel > 15) {
+    new_midi_channel = 1;
+  }
+  if (midi_channel != new_midi_channel) {
+    eeprom_write_byte((uint8_t*) 0, new_midi_channel);
+  }
+  midi_channel = new_midi_channel;
+}
+
+void
+init_scancode_map(void)
+{
+  // establish mapping from scan code to key number
+  scancode_to_keynum[28] = 255;
+  scancode_to_keynum[24] = 255;
+  scancode_to_keynum[20] = 0;
+  scancode_to_keynum[16] = 1;
+  scancode_to_keynum[12] = 2;
+  scancode_to_keynum[8] = 3;
+  scancode_to_keynum[4] = 4;
+  scancode_to_keynum[0] = 5;
+  scancode_to_keynum[29] = 6;
+  scancode_to_keynum[25] = 7;
+  scancode_to_keynum[21] = 8;
+  scancode_to_keynum[17] = 9;
+  scancode_to_keynum[13] = 10;
+  scancode_to_keynum[9] = 11;
+  scancode_to_keynum[5] = 12;
+  scancode_to_keynum[1] = 13;
+  scancode_to_keynum[30] = 14;
+  scancode_to_keynum[26] = 15;
+  scancode_to_keynum[22] = 16;
+  scancode_to_keynum[18] = 17;
+  scancode_to_keynum[14] = 18;
+  scancode_to_keynum[10] = 19;
+  scancode_to_keynum[6] = 20;
+  scancode_to_keynum[2] = 21;
+  scancode_to_keynum[31] = 22;
+  scancode_to_keynum[27] = 23;
+  scancode_to_keynum[23] = 24;
+  scancode_to_keynum[19] = 25;
+  scancode_to_keynum[15] = 26;
+  scancode_to_keynum[11] = 27;
+  scancode_to_keynum[7] = 28;
+  scancode_to_keynum[3] = 29;
+}
+
 int
 main(void)
 {
   SetupHardware();
 
   GlobalInterruptEnable();
+
+  init_scancode_map();
+
+  init_midi_channel();
 
   for (;;) {
     check_pedal();
