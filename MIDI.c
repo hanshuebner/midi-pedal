@@ -34,9 +34,9 @@ USB_ClassInfo_MIDI_Device_t Keyboard_MIDI_Interface = {
   },
 };
 
-#define DEBOUNCE_TIME 50 // Number of cycles to debounce inputs
-#define NPEDALS   32     // Number of pedals
-#define BASE_NOTE 24     // C1, see https://www.inspiredacoustics.com/en/MIDI_note_numbers_and_center_frequencies
+#define DEBOUNCE_TIME 50  // Number of cycles to debounce inputs
+#define NPEDALS   32      // Number of pedals
+#define BASE_NOTE 24      // C1, see https://www.inspiredacoustics.com/en/MIDI_note_numbers_and_center_frequencies
 static uint8_t pedal_locks[NPEDALS];
 static uint32_t last_pedal_state;
 
@@ -76,6 +76,7 @@ read_pedal(void)
   GlobalInterruptDisable();
   for (uint8_t block = 0x80; block; block >>= 1) {
     PORTB = ~block;
+    Delay_MS(1);
     state <<= 4;
     state |= (PIND & 0x0f);
   }
